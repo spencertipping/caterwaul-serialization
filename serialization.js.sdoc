@@ -1,0 +1,39 @@
+Caterwaul serialization support | Spencer Tipping
+Licensed under the terms of the MIT source code license
+
+Introduction.
+This project is an offshoot from the Rather Insane Serialization library (github.com/spencertipping/rather-insane-serialization). I decided to port the code to caterwaul to reduce the amount
+of overhead required to implement new features. You can use this library with or without using caterwaul in your code, though closure serialization requires that you allow caterwaul to
+recompile the closure site.
+
+Implementation.
+Like Rather Insane Serialization, this library uses a secret marker to identify objects. It also uses this marker to communicate with closures and constructors without activating them. For
+example, let's suppose we have a constructor function f():
+
+| var f = function (x, y) {
+    this.x = x;
+    this.y = y;
+    alert('Created an f');
+  };
+
+Suppose we now serialize an instance of f and want to reconstruct it. If we invoked the constructor to obtain the new instance, then we'd end up calling alert() spuriously. To fix this, we
+rewrite the constructor to accept a secret bypass value, and we then inform the constructor to return immediately if that bypass value is found. This results in a deserialized constructor like
+this:
+
+| var f = function (x, y) {
+    if (arguments.length === 1 && arguments[0] === secret) return;
+    this.x = x;
+    this.y = y;
+    alert('Created an f');
+  };
+
+The instance variables of the object are then treated as normal properties in the reference graph. In this example, the instance's x and y properties will be reconstructed normally. This is a
+valid interpretation, since non-native constructors must return regular objects and it's not possible to set the DontEnum flag in lowest-common-denominator Javascript implementations (which is
+ultimately what this project is built for).
+
+Unlike Rather Insane Serialization, this library distinguishes between boxed and unboxed primitives.
+
+Serialization format.
+This serialization format borrows a lot from Rather Insane Serialization, but a few things differ. First, each constant table entry references its constructor; that is, functions end up being
+serialized first, with a few hard references to Object, Array, and other native constructors. Finitely-enumerable primitives, which means null, undefined, true, false, NaN, -Infinity, and
+Infinity, are stored as fixed-position constants.

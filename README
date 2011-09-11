@@ -1,0 +1,5 @@
+Very powerful serialization for Javascript.
+This is similar to Rather Insane Serialization, but supports an even wider
+array of features. This library adds support for prototype-based class
+hierarchies and, in many cases, lexical closures. It uses a semi-stateful
+stream interface to eliminate redundant communication for RPC applications.
