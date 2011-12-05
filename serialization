@@ -3280,8 +3280,7 @@ Caterwaul serialization support | Spencer Tipping
 Licensed under the terms of the MIT source code license
 
 Introduction.
-This project is an offshoot from the Rather Insane Serialization library (github.com/spencertipping/rather-insane-serialization). I decided to rethink the use cases, make it more efficient,
-and add some features, like closure serialization, that require compile-time code transformation (which Caterwaul is ideally suited to do).
+This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul.
 
 __
 meta::parent('/home/spencertipping/bin/caterwaul-extension.html', <<'__');
