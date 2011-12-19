@@ -3347,7 +3347,7 @@ separate decoder for that type of value. The following types are encoded:
 This library leaves the remaining 83 spaces open for future use. Lengths are encoded as variable-length 53-bit integers (more on this below). Then the data representing the object follows for
 the next <length> bytes. (It's safe to assume bytes in a UTF-8 world because all encoded characters fall within the range 33-126, inclusive.)
 
-  $.serialization = capture [
+  $.serialization = wcapture [
 
 Numeric encoding.
 There are two ways to encode numbers. One is used for integers, and the other is used for floating-point numbers. The format is similar to the one used in Rather Insane Serialization. Integers
@@ -3355,13 +3355,22 @@ use a variable-length encoding that can handle up to 53 bits (8.08 bytes of entr
 format uses the first character to determine the length and supply some entropy. Specifically:
 
 | 1. The first character is 33 - 109: interpret literally as a single-character unsigned integer between 0 and 76, inclusive.
-  2. The first character is 110 - 117: encodes a length between 2 and 9, inclusive; the following characters are unsigned positive base-94 integer digits.
-  3. The first character is 118 - 125: encodes a length between 2 and 9, inclusive; the following characters are unsigned negative base-94 integer digits.
+  2. The first character is 110 - 117: encodes a length between 2 and 9, inclusive; the following characters are unsigned negative base-94 integer digits.
+  3. The first character is 118 - 125: encodes a length between 2 and 9, inclusive; the following characters are unsigned positive base-94 integer digits.
 
 Integers are little-endian encoded. This means that the least-significant base-94 digit comes first, not last. So the bytes [34, 33] means the number 1, not 94.
 
-    radix_encode(n) = n /~![base <= n][String.fromCharCode(33 + (n / (base *= 94) >>> 0) % 94)] -seq -re- it.slice(1).join('') -where [base = 1 / 94],
-    radix_decode(n) = n.split('') /[0][x0 + (x.charCodeAt(0) - 33) * (base *= 94)] -seq -where [base = 1 / 94]]})(caterwaul);
+    char_encode(n) = String.fromCharCode(n + 33),
+    char_decode(c) = c.charCodeAt(0) - 33,
+
+    radix_encode(n, l) = n /~![base <= n || xi <= l][(n / (base *= 94) >>> 0) % 94 /!char_encode] -seq -re- it.slice(1).join('') -where [base = 1 / 94],
+    radix_decode(s)    = s.split('') /[0][x0 + char_decode(x) * (base *= 94)] -seq -where [base = 1 / 94],
+
+    integer_encode(n)  = n >= 0 && n <= 76 ? char_encode(n) : (n < 0 ? l + digits -where [l = String.fromCharCode(digits.length + 108)]
+                                                                     : l + digits -where [l = String.fromCharCode(digits.length + 116)]) -where [digits = radix_encode(Math.abs(n), 2)],
+
+    integer_decode(s)  = where [c = char_decode(s)] [c <= 76 ? c : c <= 84 ? -radix_decode(s.substr(1, c - 74)) : radix_decode(s.substr(1, c - 82))]
+    ]})(caterwaul);
 
 __
 meta::parent('/home/spencertipping/bin/caterwaul-extension.html', <<'__');
