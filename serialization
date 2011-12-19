@@ -495,7 +495,7 @@ meta::cached_dependency('caterwaul.js', <<'__');
 //   as 'if', 'for', 'while', and 'with'. The parser then folds operators and ends by folding these block-level constructs.
 
     parse_reduce_order = map(hash, ['function', '( [ . [] ()', 'new delete', 'u++ u-- ++ -- typeof u~ u! u+ u-', '* / %', '+ -', '<< >> >>>', '< > <= >= instanceof in', '== != === !==', '&',
-                                    '^', '|', '&&', '||', 'case', '?', '= += -= *= /= %= &= |= ^= <<= >>= >>>=', ':', ',', 'return throw break continue void', 'var const',
+                                    '^', '|', '&&', '||', 'case', '? = += -= *= /= %= &= |= ^= <<= >>= >>>=', ':', ',', 'return throw break continue void', 'var const',
                                     'if else try catch finally for switch with while do', ';']),
 
 parse_associates_right = hash('= += -= *= /= %= &= ^= |= <<= >>= >>>= ~ ! new typeof u+ u- -- ++ u-- u++ ? if else function try catch finally for switch case with while do'),
@@ -1335,10 +1335,25 @@ is_prefix_unary_operator: function () {return has(parse_r, this.data)},         
 
 // This informs my_caterwaul and my_other_caterwaul that your intent is just to macroexpand trees to trees, not transform functions into other functions.
 
+  // Composition syntax.
+//   Caterwaul 1.1.6 introduces a string-based syntax for initialization. So instead of things like caterwaul.jquery(caterwaul.js_all())(...), you can write caterwaul('js_all jquery')(...). The
+//   rule in this case is that each word is transformed into a method invocation. The first one is invoked with no parameters, and subsequent ones are invoked on the return value of the previous
+//   method. Methods are called from left to right, so the string order is opposite from function composition order. For example:
+
+  // | caterwaul('m1 m2 m3')       ->      caterwaul.m3(caterwaul.m2(caterwaul.m1()))
+
+  // All Caterwaul standard libraries are written such that they can be used this way.
+
+  var invoke_caterwaul_methods = function (methods) {
+    for (var ms = methods.split(/\s+/), i = 1, l = ms.length, r = caterwaul_global[ms[0]](); i < l; ++i) r = caterwaul_global[ms[i]](r);
+    return r};
+
   caterwaul_global.init = function (macroexpander) {
+    macroexpander                          || (macroexpander = function (x) {return true});
+    macroexpander.constructor === Function || (macroexpander = invoke_caterwaul_methods(macroexpander));
     var result = function (f, environment, options) {
       return f.constructor === Function || f.constructor === String ? caterwaul_global.compile(result.call(result, caterwaul_global.parse(f)), environment, options) :
-                                                      macroexpander ? f.rmap(function (node) {return macroexpander.call(result, node, environment, options)}) : f};
+                                                                      f.rmap(function (node) {return macroexpander.call(result, node, environment, options)})};
     result.global        = caterwaul_global;
     result.macroexpander = macroexpander;
     return result};
@@ -1948,6 +1963,7 @@ meta::cached_dependency('caterwaul.std.js', <<'__');
 //   -  = cartesian product        e.g.  [1, 2] - [3, 4] |seq               ->  [[1, 3], [1, 4], [2, 3], [2, 4]]
 //   ^  = zip                      e.g.  [1, 2, 3] ^ [4, 5, 6] |seq         ->  [[1, 4], [2, 5], [3, 6]]
 //   |  = exists                   e.g.  [1, 2, 3] |[x === 2] |seq          ->  true
+//   |! = not-exists               e.g.  [1, 2, 3] |![x >= 4] |seq          ->  true
 
 // Note that ^ has higher precedence than |, so we can use it in a sequence comprehension without interfering with the |seq macro (so long as the |seq macro is placed on the right).
 
@@ -2024,6 +2040,12 @@ meta::cached_dependency('caterwaul.std.js', <<'__');
 
   // | xs /[0][x0 + x*x] -seq              (sum the squares of each element)
 //     xs /~[[]][x0 + [x, x + 1]] -seq     (equivalent to  xs *~![[x, x + 1]] -seq)
+
+  // From 1.1.5 onwards, these fold prefixes can be used with other operators as well. For example:
+
+  // | 1 /~![xi < 10][x + 1] -seq          (return the array [1, 2, ..., 9]: the first block conditionalizes the unfold)
+//     xs %~![x < 0][-x] -seq              (return an array of the negation of all negative elements in the first)
+//     xs *~![xi < 10][f(x)] -seq          (return the tenth composition of f over x)
 
   // Function promotion.
 //   Caterwaul 1.1 also adds support for implicit function promotion of sequence block expressions:
@@ -2124,7 +2146,8 @@ caterwaul.words(caterwaul.js())(function ($) {
                                                   rule('S[(_x)]', '(S[_x])'),  rule('S[_x[_y]]', 'S[_x][_y]'),     rule('S[_xs(_ys)]', 'S[_xs](_ys)'),
                                                   rule('S[[_x]]', '[_x]'),     rule('S[_x, _y]', 'S[_x], S[_y]'),  rule('S[_xs._p]',   'S[_xs]._p'),
 
-                                                  rule('S[~[_x]]', '[S[_x]]'),          // <- ~ modifier on arrays
+                                                  rule('S[~[_x]]',     '[S[_x]]'),              // ~ modifier on arrays
+                                                  rule('S[~_xs(_ys)]', 'S[_xs](S[_ys])'),       // ~ modifier on function calls
 
                                                   rule('S[_x ? _y : _z]', '(S[_x]) ? (S[_y]) : (S[_z])'), rule('S[_x && _y]', '(S[_x]) && (S[_y])'), rule('S[_x || _y]', '(S[_x]) || (S[_y])'),
 
@@ -2151,16 +2174,16 @@ caterwaul.words(caterwaul.js())(function ($) {
                                                                              iform_function(form)(body, init, vars) = use_form(form, xs, body, init, vars),
                                                                              use(form, iform)(body)                 = parse_body(body, expander, form_function(form), iform_function(iform))],
 
-                            handle_map_forms                       = operator_case({normal: map,     bang: each,        tbang: flatmap}),
-                            handle_filter_forms                    = operator_case({normal: filter,  bang: filter_not,  tbang: map_filter}),
-                            handle_fold_forms                      = operator_case({normal: foldl,   bang: foldr,       tbang: unfold,     inormal: ifoldl,  ibang: ifoldr}),
+                            handle_map_forms                       = operator_case({normal: map,     bang: each,        tbang: flatmap,                                   itbang: iterate}),
+                            handle_filter_forms                    = operator_case({normal: filter,  bang: filter_not,  tbang: map_filter,                                itbang: imap_filter}),
+                            handle_fold_forms                      = operator_case({normal: foldl,   bang: foldr,       tbang: unfold,    inormal: ifoldl, ibang: ifoldr, itbang: iunfold}),
 
                             handle_kmap_forms                      = operator_case({normal: kmap,    bang: keach}),
                             handle_kfilter_forms                   = operator_case({normal: kfilter, bang: kfilter_not, tbang: kmap_filter}),
                             handle_vmap_forms                      = operator_case({normal: vmap,    bang: veach}),
                             handle_vfilter_forms                   = operator_case({normal: vfilter, bang: vfilter_not, tbang: vmap_filter}),
 
-                            handle_exists_forms                    = operator_case({normal: exists}),
+                            handle_exists_forms                    = operator_case({normal: exists,  bang: not_exists}),
 
                             // Body parsing
                             block                                  = anon('[_x]'),
@@ -2221,18 +2244,24 @@ caterwaul.words(caterwaul.js())(function ($) {
                             each        = form('for (var                            _xi = 0, _xl = xs.length; _xi < _xl; ++_xi) _x = xs[_xi], (_f);                       return xs'),
                             flatmap     = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length; _xi < _xl; ++_xi) _x = xs[_xi], ys.push.apply(ys, @((_f))); return ys'),
 
-                            filter      = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length;     _xi < _xl; ++_xi) _x = xs[_xi], (_f) && ys.push(_x);        return ys'),
-                            filter_not  = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length;     _xi < _xl; ++_xi) _x = xs[_xi], (_f) || ys.push(_x);        return ys'),
-                            map_filter  = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length, _y; _xi < _xl; ++_xi) _x = xs[_xi], (_y = (_f)) && ys.push(_y); return ys'),
+                            iterate     = form('for (var _x = xs, _xi = 0, _x0, _xl;                      _x0 = (_init); ++_xi) _x = (_f);                                return _x'),
+
+                            filter      = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length, _x0;     _xi < _xl; ++_xi) _x = xs[_xi], (_f) && ys.push(_x);        return ys'),
+                            filter_not  = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length, _x0;     _xi < _xl; ++_xi) _x = xs[_xi], (_f) || ys.push(_x);        return ys'),
+                            map_filter  = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length, _x0, _y; _xi < _xl; ++_xi) _x = xs[_xi], (_y = (_f)) && ys.push(_y); return ys'),
+
+                            imap_filter = form('for (var ys = new xs.constructor(), _xi = 0, _xl = xs.length, _x0; _xi < _xl; ++_xi) _x = xs[_xi], (_x0 = (_init)) && ys.push(_f); return ys'),
 
                             foldl       = form('for (var _x0 = xs[0], _xi = 1, _xl = xs.length;            _xi < _xl; ++_xi) _x = xs[_xi], _x0 = (_f); return _x0'),
                             foldr       = form('for (var _xl = xs.length, _xi = _xl - 2, _x0 = xs[_xl - 1]; _xi >= 0; --_xi) _x = xs[_xi], _x0 = (_f); return _x0'),
-                            unfold      = form('for (var ys = [], _x = xs, _xi = 0;                     _x !== null; ++_xi) ys.push(_x), _x = (_f);    return ys'),
+                            unfold      = form('for (var ys = [], _x = xs, _xi = 0;                      _x !== null; ++_xi) ys.push(_x), _x = (_f);   return ys'),
 
                             ifoldl      = form('for (var _x0 = (_init), _xi = 0, _xl = xs.length;      _xi < _xl; ++_xi) _x = xs[_xi], _x0 = (_f);     return _x0'),
                             ifoldr      = form('for (var _xl = xs.length - 1, _xi = _xl, _x0 = (_init); _xi >= 0; --_xi) _x = xs[_xi], _x0 = (_f);     return _x0'),
+                            iunfold     = form('for (var ys = [], _x = xs, _xi = 0, _x0;           _x0 = (_init); ++_xi) ys.push(_x), _x = (_f);       return ys'),
 
                             exists      = form('for (var _x = xs[0], _xi = 0, _xl = xs.length, x; _xi < _xl; ++_xi) {_x = xs[_xi]; if (x = (_f)) return x} return false'),
+                            not_exists  = form('for (var _x = xs[0], _xi = 0, _xl = xs.length, x; _xi < _xl; ++_xi) {_x = xs[_xi]; if (x = (_f)) return false} return true'),
 
                             concat      = anon('(S[_xs]).concat((S[_ys]))'),
 
@@ -2618,8 +2647,7 @@ __
 meta::function('reload', 'around_hook(\'reload\', sub {execute($_) for grep ! /^bootstrap::/, keys %data});');
 meta::function('render', <<'__');
 around_hook('render', @_, sub {
-  file::write("$_.js",     sdoc("module::$_")) for modules();
-  file::write('test.html', retrieve('pp::html::test'))});
+  file::write("$_.js", sdoc("module::$_")) for modules()});
 
 __
 meta::function('repl', <<'__');
@@ -3280,7 +3308,60 @@ Caterwaul serialization support | Spencer Tipping
 Licensed under the terms of the MIT source code license
 
 Introduction.
-This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul.
+This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul. In addition to the functionality implemented in Rather
+Insane Serialization, this project also provides support for opaque references, which are associated with a specific serialization stream. This is useful for dealing with non-serializable
+values that are intermixed with normal ones. The most common use case for this is probably sending DOM nodes or jQuery collections to a server and then resolving them back into local objects
+when they reach the client again. This serialization library encodes the object's opaque identity whenever a reference is used; that way you have the property that for any reference X,
+deserialize(serialize(X)) === X. (This is true even if X changes state between serialization and deserialization.)
+
+caterwaul('js_all')(function ($) {
+
+Serialization format.
+Serialized values are stored as printable ASCII strings, just like in Rather Insane Serialization. However, the format is not backwards-compatible in the general case. The following Javascript
+values are encoded as predefined constants, as before:
+
+| 0. undefined
+  1. null
+  2. value-type false
+  3. value-type true
+  4. value-type NaN
+  5. value-type -Infinity
+  6. value-type +Infinity
+  7. value-type 0
+
+Unlike the previous format, however, every value has a two-character prefix that indicates both its type and its serialized length. This prefix provides enough information to delegate to a
+separate decoder for that type of value. The following types are encoded:
+
+| 0. Primitive number
+  1. Primitive string
+  2. Unknown (used for opaque value encoding)
+  3. Reference boolean
+  4. Reference number
+  5. Reference string
+  6. Array
+  7. Object
+  8. Date
+  9. Regexp
+ 10. Function (no closure support, unfortunately; but local referencing is used)
+
+This library leaves the remaining 83 spaces open for future use. Lengths are encoded as variable-length 53-bit integers (more on this below). Then the data representing the object follows for
+the next <length> bytes. (It's safe to assume bytes in a UTF-8 world because all encoded characters fall within the range 33-126, inclusive.)
+
+  $.serialization = capture [
+
+Numeric encoding.
+There are two ways to encode numbers. One is used for integers, and the other is used for floating-point numbers. The format is similar to the one used in Rather Insane Serialization. Integers
+use a variable-length encoding that can handle up to 53 bits (8.08 bytes of entropy using base-94 encoding). Small numbers are preferred to large ones; that is, they take up less space. The
+format uses the first character to determine the length and supply some entropy. Specifically:
+
+| 1. The first character is 33 - 109: interpret literally as a single-character unsigned integer between 0 and 76, inclusive.
+  2. The first character is 110 - 117: encodes a length between 2 and 9, inclusive; the following characters are unsigned positive base-94 integer digits.
+  3. The first character is 118 - 125: encodes a length between 2 and 9, inclusive; the following characters are unsigned negative base-94 integer digits.
+
+Integers are little-endian encoded. This means that the least-significant base-94 digit comes first, not last. So the bytes [34, 33] means the number 1, not 94.
+
+    radix_encode(n) = n /~![base <= n][String.fromCharCode(33 + (n / (base *= 94) >>> 0) % 94)] -seq -re- it.slice(1).join('') -where [base = 1 / 94],
+    radix_decode(n) = n.split('') /[0][x0 + (x.charCodeAt(0) - 33) * (base *= 94)] -seq -where [base = 1 / 94]]})(caterwaul);
 
 __
 meta::parent('/home/spencertipping/bin/caterwaul-extension.html', <<'__');
