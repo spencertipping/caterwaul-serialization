@@ -39,8 +39,7 @@ caterwaul('js_all')(function ($) {
 //   7. Regexp
 //   8. Function (no closure support, unfortunately; but local referencing is used)
 
-  $.serialization() = create_stream(),
-  where [
+  $.serialization = stream /-$.merge/ statics -where [
 
 // Object traversal logic.
 // There are several steps to encoding a value. First, if the value is a primitive of some sort, it is encoded directly into the constant table. Multiple references to the same primitive are
@@ -53,16 +52,18 @@ caterwaul('js_all')(function ($) {
 // -> null), and one key/value pair ('hello' -> 'world'). 'hello' is at position 8 because of the preloaded constants, and 'world' is at position 9. Every reference type has the first three
 // fields; further values are dependent on the key/value map of the object being encoded.
 
+    statics                                       = capture [unknown = "this -se [it.id = _]".qf -se [it.prototype /-$.merge/ capture [toString() = '<#unknown #{this.id}>']]],
+
     key()                                         = n[22] *[String.fromCharCode(Math.random() * 94 + 33 >>> 0)] -seq -re- it.join(''),
     precoded_values                               = [void 0, null, false, true, ''/'', -1/0, 1/0, 0],
     structural_reference_types                    = [Boolean, Number, String, Array, Object, Date, RegExp, Function],
 
-    encoder(locals, k, xs, c, encode = result)(v) = position_of(v) -or- wrap(v, store(v))
-                                            -where [ref_detector         = key(),
-                                                    is_precoded(v)       = !v || !isFinite(v) || v === true,
-                                                    is_reference(v)      = (v[ref_detector] = ref) -re [v[ref_detector] === ref] -se- delete v[ref_detector] -where [ref = {}],
+    encoder(locals, k, xs, c, encode = result)(v) = position_of(v) -or- store(v) -re- +it
+                                            -where [ref_detector          = key(),
+                                                    is_precoded(v)        = !v || v.constructor === Number && (!isFinite(v) || isNaN(v)) || v === true,
+                                                    is_reference(v)       = (v[ref_detector] = ref) -re [v[ref_detector] === ref] -se- delete v[ref_detector] -where [ref = {}],
 
-                                                    precoded_index_of(v) = precoded_values /~indexOf/ v,
+                                                    precoded_index_of(v)  = isNaN(v) ? 4 : precoded_values /~indexOf/ v,
 
                                                     // Note to self: the new Number() sketchiness is about making 0 truthy. If it's falsy, then position_of(v) might be false, causing
                                                     // 'undefined' to be stored in the real constant table (which will break all sorts of stuff).
@@ -74,19 +75,38 @@ caterwaul('js_all')(function ($) {
 
                                                     type_of(v)            = structural_reference_types /~indexOf/ v + 1,
                                                     value_of(v)           = v.constructor === Boolean || v.constructor === Number || v.constructor === Date ? v.valueOf() :
-                                                                            v.constructor === String || v.constructor === RegExp || v.constructor === Function ? v.toString() : null,
+                                                                            v.constructor === String || v.constructor === RegExp || v.constructor === Function ? v.toString() :
+                                                                            v.constructor === Array ? v *encode -seq -re- it.join(',') : null,
 
-                                                    visit(v)              = v /pairs *!encode_pair -seq -where [ref            = xs[position_of(v) - 8],
-                                                                                                                encode_pair(p) = ref / encode(p[0]) /~push/ encode(p[1])]],
+                                                    visit(v)              = where [ref = xs[position_of(v) - 8], encode_pair(p) = ref / encode(p[0]) /~push/ encode(p[1])]
+                                                                                  [v.constructor === Array
+                                                                                     ? v /pairs %![x[0] === k || /^\d+/.test(x) && +x >= 0 && +x < v.length] *!encode_pair -seq
+                                                                                     : v /pairs %![x[0] === k] *!encode_pair -seq]],
 
-    decode(locals, xs) = values[values.length - 1] -where [was_local                    = {},
-                                                           reconstitute(o, i)           = o.constructor === Array ? (was_local[i] = locals[o[1]]) || reconstitute_reference(o, i) : o,
-                                                           reconstitute_reference(o, i) = 
+    decode(locals, xs) = values[xs[xs.length - 1]] -where [was_local                     = {},
+                                                           reconstitute(o, i, xr)        = o.constructor === Array ? (was_local[i] = locals.values[o[1]]) || reconstitute_reference(o, xr) : o,
+                                                           reconstitute_reference(o, xr) = o[0] === 4             ? xr[o[2] - 8].split(/,/) *i[xr[+i - 8]] -seq :
+                                                                                           o[0] === 8             ? safely_rebuild_function(xr[o[2] - 8]) :
+                                                                                           o[0] === 7             ? /^\/(.*)\/([^\/]*)$/.exec(xr[o[2] - 8]) -re [new RegExp(it[1], it[2])] :
+                                                                                           o[0] >= 1 && o[0] <= 8 ? new structural_reference_types[o[0] - 1](xr[o[2] - 8]) :
+                                                                                                                    new $.serialization.unknown(o[1]),
+                                                           safely_rebuild_function(code) = $.compile(parsed)
+                                                                                    -when [parsed /!looks_like_a_function || parsed[0].data === '(' && parsed[0] /!looks_like_a_function]
+                                                                                   -where [parsed                   = $.parse(code),
+                                                                                           looks_like_a_function(t) = t.data === 'function' && t[0].data === '(' && t[1].data === '{'],
 
-                                                           values                       = precoded_values + xs *[reconstitute(x, xi)] -seq,
+                                                           relink(refs, data)            = data *![n[3, x.length, 2] *!i[refs[xi][x[i]] = refs[x[i + 1]]] -seq
+                                                                                                   -when [x.constructor === Array && !was_local[xi]]] -seq,
 
+                                                           values                        = precoded_values + xs *[reconstitute(x, xi, xr)] -seq -se- relink(it, xs)],
 
+    stream(self = result) = "self.encode(_)".qf /-$.merge/ capture [locals    = {values: {}, i: 0},
 
-    ]})(caterwaul);
+                                                                    encode(v) = encoder(self.locals, k, xs, {})(v) -se- remove_markers_from(self.locals.values) -se- xs /~push/ it -re- xs
+                                                                        -where [k                       = key(),
+                                                                                xs                      = [],
+                                                                                remove_markers_from(vs) = vs *![delete x[k]] -seq],
+
+                                                                    decode(v) = decode(self.locals, v)]]})(caterwaul);
 
 // Generated by SDoc 
