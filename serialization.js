@@ -47,11 +47,11 @@ caterwaul('js_all')(function ($) {
 // elided by reusing existing constant table entries; this is valid because primitives are extensional. Each reference has its 'value' stored, along with a table of its local key/value pairs.
 // Each key and value is an index into the constant table. So, for example, here is how an object is encoded:
 
-// | {hello: 'world'}   ->   ['hello', 'world', [5, 0, 1, 9, 10], 11]
+// | {hello: 'world'}   ->   ['hello', 'world', [5, 0, 1, [], [9, 10]], 11]
 
-// The last value in the toplevel array is the one that was serialized. The object's encoding arises because it is an object (5) with a stream-local ID (0), no particularly interesting value (1
-// -> null), and one key/value pair ('hello' -> 'world'). 'hello' is at position 9 because of the preloaded constants, and 'world' is at position 9. Every reference type has the first three
-// fields; further values are dependent on the key/value map of the object being encoded.
+// The last value in the toplevel array is the logical index of the one that was serialized. The object's encoding arises because it is an object (5) with a stream-local ID (0), no particularly
+// interesting value (1 -> null), no array-indexed properties ([]), and one key/value pair ('hello' -> 'world'). 'hello' is at position 9 because of the preloaded constants, and 'world' is at
+// position 10. Every reference type has all five of these fields.
 
     statics                                       = capture [unknown = "this -se [it.id = _]".qf -se [it.prototype /-$.merge/ capture [toString() = '<#unknown #{this.id}>']]],
 
@@ -69,53 +69,51 @@ caterwaul('js_all')(function ($) {
 
                                                     precoded_index_of(v)  = precoded_values /~indexOf/ v -re [it === -1 && isNaN(v) ? 4 : it],
 
-                                                    // Note to self: the new Number() sketchiness is about making 0 truthy. If it's falsy, then position_of(v) might be false, causing
-                                                    // 'undefined' to be stored in the real constant table (which will break all sorts of stuff).
-                                                    position_of(v)        = v /!is_precoded ? new Number(precoded_index_of(v)) : v /!is_reference ? v[k] : c['@#{v}'],
-                                                    store(v)              = v /!is_reference ? store_reference(locals.values[locals.i++] = v, locals.i) -se- visit(v)
-                                                                                             : c['@#{v}'] = shift1 + xs /~push/ v,
+                                                    position_of(v)        = v /!is_precoded ? new Number(precoded_index_of(v)) : v /!is_reference ? v[k] : c['@#{(typeof v).charAt(0)}#{v}'],
+                                                    store(v)              = v /!is_reference ? store_reference(locals[k] = v, k) -where [k = key()] -se- visit(v)
+                                                                                             : c['@#{(typeof v).charAt(0)}#{v}'] = shift1 + xs /~push/ v,
 
-                                                    store_reference(v, i) = v[k] = shift1 + xs /~push/ [type_of(v), i, value_of(v)],
+                                                    store_reference(v, i) = v[k] = shift1 + xs /~push/ [type_of(v), i, value_of(v), []],
 
                                                     type_of(v)            = structural_reference_types /~indexOf/ v.constructor + 1,
                                                     value_of(v)           = v.constructor === Boolean || v.constructor === Number || v.constructor === Date     ? encode(v.valueOf()) :
-                                                                            v.constructor === String  || v.constructor === RegExp || v.constructor === Function ? encode(v.toString()) :
-                                                                            v.constructor === Array ? v *encode -seq -re- it.join(',') : null,
+                                                                            v.constructor === String  || v.constructor === RegExp || v.constructor === Function ? encode(v.toString()) : [],
 
-                                                    visit(v)              = where [ref = xs[position_of(v) - shift], encode_pair(p) = encode(p[0]) /-ref.push/ encode(p[1])]
-                                                                                  [v.constructor === Array
-                                                                                     ? v /pairs %![x[0] === k || /^\d+$/.test(x[0]) && +x[0] >= 0 && +x[0] < v.length] *!encode_pair -seq
-                                                                                     : v /pairs %![x[0] === k] *!encode_pair -seq]],
+                                                    visit(v)              = where [ref = xs[position_of(v) - shift], encode_pair(p) = ref[3] / encode(p[0]) /~push/ encode(p[1])]
+                                                                                  [v instanceof Array
+                                                                                     ? v %k%[x !== k && !(/^\d+$/.test(x) && +x >= 0 && +x < v.length)] /pairs *!encode_pair -seq
+                                                                                       -se [ref[2] = v *encode -seq]
+                                                                                     : v %k%[x !== k] /pairs *!encode_pair -seq]],
+    decode(locals, xs) = ref(values, values.pop())
+                 -where [was_local                     = {},
+                         reconstitute(o, i)            = o.constructor === Array ? (was_local[i] = locals[o[1]]) || reconstitute_reference(o, xs) : o,
+                         reconstitute_reference(o)     = o[0] === 4        ? [] :
+                                                         o[0] === 8        ? safely_rebuild_function(xs /-ref/ o[2]) :
+                                                         o[0] === 7        ? /^\/(.*)\/([^\/]*)$/.exec(xs /-ref/ o[2]) -re [new RegExp(it[1], it[2])] :
+                                                         o[0] && o[0] <= 8 ? new structural_reference_types[o[0] - 1](xs /-ref/ o[2]) :
+                                                                             new $.serialization.unknown(o[1]),
 
-    decode(locals, xs) = values[xs[xs.length - 1]] -where [was_local                     = {},
-                                                           reconstitute(o, i, xr)        = o.constructor === Array ? (was_local[i] = locals.values[o[1]]) || reconstitute_reference(o, xr) : o,
-                                                           reconstitute_reference(o, xr) = o[0] === 4        ? ref(xr, o[2]).split(/,/) *i[xr /-ref/ +i] -seq :
-                                                                                           o[0] === 8        ? safely_rebuild_function(xr /-ref/ o[2]) :
-                                                                                           o[0] === 7        ? /^\/(.*)\/([^\/]*)$/.exec(xr /-ref/ o[2]) -re [new RegExp(it[1], it[2])] :
-                                                                                           o[0] && o[0] <= 8 ? new structural_reference_types[o[0] - 1](xr /-ref/ o[2]) :
-                                                                                                               new $.serialization.unknown(o[1]),
+                         ref(xs, index)                = index >= shift ? xs[index - shift] : precoded_values[index],
 
-                                                           ref(xr, index)                = index >= shift ? xr[index - shift] : precoded_values[index],
+                         safely_rebuild_function(code) = $ /~compile/ parsed
+                                                  -when [parsed /!looks_like_a_function || parsed[0].data === '(' && parsed[0] /!looks_like_a_function]
+                                                 -where [parsed                   = $ /~parse/ code,
+                                                         looks_like_a_function(t) = t.data === 'function' && t[0].data === '(' && t[1].data === '{'],
 
-                                                           safely_rebuild_function(code) = $ /~compile/ parsed
-                                                                                    -when [parsed /!looks_like_a_function || parsed[0].data === '(' && parsed[0] /!looks_like_a_function]
-                                                                                   -where [parsed                   = $ /~parse/ code,
-                                                                                           looks_like_a_function(t) = t.data === 'function' && t[0].data === '(' && t[1].data === '{'],
+                         relink(serialized, objects)   = serialized *!link_object_properties *!link_array_properties -seq
+                                                 -where [has_links(x)                                    = x.constructor === Array && !was_local[this.xi],
+                                                         has_indexes(x)                                  = x /!has_links && x[0] === 4,
+                                                         link_object_properties(s, o = objects[this.xi]) = s[3] *![o[objects /-ref/ x] = objects /-ref/ xs[++xi]] -seq -when- s /!has_links,
+                                                         link_array_properties (s, o = objects[this.xi]) = s[2] *![o.push(objects /-ref/ x)]                      -seq -when- s /!has_indexes],
 
-                                                           relink(refs, data)            = data *!d[n[3, d.length, 2] *!i[refs[di][d[i]] = refs[d[i + 1]]] -seq
-                                                                                                    -when [d.constructor === Array && !was_local[di]]] -seq,
+                         values                        = xs *[reconstitute(x, xi)] -seq -se- relink(it, xs)],
 
-                                                           clean_locals()                = was_local /keys *!k[delete locals.values[xs[k][1]]] -seq,
-                                                           values                        = precoded_values + xs *[reconstitute(x, xi, xr)] -seq -se- relink(it, xs) -se- clean_locals()],
+    stream(self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals    = {},
 
-    stream(self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals    = {values: {}, i: 0},
-
-                                                                      encode(v) = encoder(self.locals, k, xs, {})(v) -se- remove_markers() -se- xs /~push/ it -re- xs
-                                                                          -where [k                = key(),
-                                                                                  xs               = [],
-                                                                                  locals_start     = self.locals.i,
-                                                                                  remove_markers() = n[locals_start, self.locals.i] *![delete vs['' + x][k]] -seq
-                                                                                             -where [vs = self.locals.values]],
+                                                                      encode(v) = xs /~push/ value_index -re- xs -where [k           = key(),
+                                                                                                                         xs          = [],
+                                                                                                                         unmark(xs)  = xs *![delete self.locals[x[1]][k]] -seq,
+                                                                                                                         value_index = encoder(self.locals, k, xs, {})(v) -se- unmark(xs)],
 
                                                                       decode(v) = decode(self.locals, v)]]})(caterwaul);
 
