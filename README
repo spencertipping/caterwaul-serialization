@@ -10,3 +10,9 @@ decoded = stream.decode(s)
 decoded.dom_node === d          // returns true
 
 It uses this technique when encoding objects whose prototypes are unknown.
+
+NOTE! This library doesn't serialize directly to strings. Instead, it produces
+JSON objects that you can serialize using any JSON library (or convert them to
+XML, or whatever). It's implemented this way (1) because I'm lazy, and (2)
+because a native JSON implementation is probably faster than anything I would
+be willing to implement here.
