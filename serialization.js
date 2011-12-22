@@ -107,6 +107,7 @@ caterwaul('js_all')(function ($) {
 
                                                     precoded_index_of(v)  = precoded_values /~indexOf/ v -re [it === -1 && isNaN(v) ? 4 : it],
 
+                                                    is_opaque(v)          = structural_reference_types /~indexOf/ v.constructor === -1,
                                                     is_unknown(v)         = v.constructor === $.serialization.unknown,
                                                     local_key_for(v)      = v /!is_unknown ? v.id : key(),
                                                     position_of(v)        = v /!is_precoded ? new Number(precoded_index_of(v)) : v /!is_reference ? v[k] : c['@#{(typeof v).charAt(0)}#{v}'],
@@ -119,7 +120,7 @@ caterwaul('js_all')(function ($) {
                                                     value_of(v)           = v.constructor === Boolean || v.constructor === Number || v.constructor === Date     ? encode(v.valueOf()) :
                                                                             v.constructor === String  || v.constructor === RegExp || v.constructor === Function ? encode(v.toString()) : [],
 
-                                                    visit(v)              = link_properties(v, is_array) -se- link_array_elements(v) /when.is_array -unless- v /!is_unknown
+                                                    visit(v)              = link_properties(v, is_array) -se- link_array_elements(v) /when.is_array -unless- v /!is_opaque
                                                                     -where [is_array                     = v instanceof Array,
                                                                             ref                          = xs[position_of(v) - shift],
                                                                             encode_pair(p)               = ref[3] / encode(p[0]) /~push/ encode(p[1]),
