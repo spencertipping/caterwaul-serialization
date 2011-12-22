@@ -106,14 +106,14 @@ caterwaul('js_all')(function ($) {
                                                          link_object_properties(s, o = objects[this.xi]) = s[3] *![o[objects /-ref/ x] = objects /-ref/ xs[++xi]] -seq -when- s /!has_links,
                                                          link_array_properties (s, o = objects[this.xi]) = s[2] *![o.push(objects /-ref/ x)]                      -seq -when- s /!has_indexes],
 
-                         values                        = xs *[reconstitute(x, xi)] -seq -se- relink(it, xs)],
+                         values                        = xs *[reconstitute(x, xi)] -seq -se- relink(xs, it)],
 
     stream(self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals    = {},
-
-                                                                      encode(v) = xs /~push/ value_index -re- xs -where [k           = key(),
-                                                                                                                         xs          = [],
-                                                                                                                         unmark(xs)  = xs *![delete self.locals[x[1]][k]] -seq,
-                                                                                                                         value_index = encoder(self.locals, k, xs, {})(v) -se- unmark(xs)],
+                                                                      encode(v) = xs /~push/ value_index -re- xs
+                                                                          -where [k           = key(),
+                                                                                  xs          = [],
+                                                                                  unmark(xs)  = xs %[x.constructor === Array] *![delete self.locals[x[1]][k]] -seq,
+                                                                                  value_index = encoder(self.locals, k, xs, {})(v) -se- unmark(xs)],
 
                                                                       decode(v) = decode(self.locals, v)]]})(caterwaul);
 
