@@ -1,0 +1,47 @@
+caterwaul('js_all')(function () {
+  test_case(x) = '#{json(x)} -> #{json(encoded)} -> (#{decoded2}) #{json(decoded2)}' /!console.log
+            -se- console.log('\033[1;31mSerialization failed to use abstract reference for #{x}\033[0;0m') /unless [decoded1 === x]
+            -se- console.log('\033[1;31mSerialization failed to preserve JSON for #{x}\033[0;0m')          /unless [json(x) === json(decoded2)]
+            -se- console.log('\033[1;31mSerialization failed to preserve constructor for #{x}\033[0;0m')   /unless [decoded1.constructor === decoded2.constructor] /when.decoded1
+         -where [s        = caterwaul.serialization(), encoded  = s(x),
+                 decoded1 = s.decode(encoded),         decoded2 = s.decode(encoded)],
+
+  // Preloaded cases
+  mt(undefined, null, true, false, Infinity, -Infinity, 0),
+
+  // Primitives
+  mt('', 'toString', 'foo bar\u0000', 1, 1.1, Math.PI),
+
+  // Reference types
+  mt(new String(''), new String('foo'), new Number(10), new Boolean(true), new Boolean(false)),
+
+  // Structural reference types
+  mt(/foo/, /bar/g, /bif/mig, new Date(), new Date(0), function (x) {return x + 1}, function () {}, function (x) {}, function () {return this}),
+
+  // Objects and arrays
+  mt([], [1, 2, 3], [1], [null], [[]], [undefined], [true, false, NaN], [{}], [new String('foo')]),
+  mt({}, {foo: 'bar'}, {foo: 1}, {'': 1}, {foo: {'': null}}, {array: []}, {x: [new Date()]}),
+
+  // Circular references
+  mt([] -se- it /~push/ it, {} -se [it.foo = it], [] -se- it /~push/ [it], {foo: []} -se- it.foo /~push/ it),
+
+  // Unknowns
+  mt(console, $),
+
+  // Unknowns as unknowns
+  mt(new $.serialization.unknown(10), new $.serialization.unknown($.gensym())),
+
+  // Unknown closure under cross-stream decoding
+  raise ['Unknown is not closed under cross-stream decoding (encoded: \033[1;33m#{s1(unknown) /!json}\033[0;0m vs \033[1;33m#{encoded /!json}\033[0;0m)']
+  -unless [s1 /~decode/ encoded === unknown]
+   -where [s1 = caterwaul.serialization(), s2 = caterwaul.serialization(), unknown = create_unknown(), encoded = s2(s2.decode(s1(unknown)))],
+
+  // Unknown closure under mismatched decoding
+  raise ['Unknown is not closed under mismatched decoding (encoded: \033[1;33m#{s1(unknown) /!json}\033[0;0m vs \033[1;33m#{encoded /!json}\033[0;0m)']
+  -unless [s1 /~decode/ encoded === unknown]
+   -where [s1 = caterwaul.serialization(), s2 = caterwaul.serialization(), s3 = caterwaul.serialization(), unknown = create_unknown(), encoded = s3.decode(s2(s1(unknown)))],
+
+  console.log('\n\n\033[1;32mOk, everything worked. You can ignore the garbage above.\033[0;0m\n\n'),
+
+  where [$ = caterwaul, mt() = arguments *!test_case -seq, json(x) = JSON.stringify(x) -rescue- '<JSON error>',
+         create_unknown() = typeof document !== 'undefined' ? document.createElement('div') : new Buffer(10)]})();
