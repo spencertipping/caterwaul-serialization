@@ -152,11 +152,15 @@ deserialization (unless one of those streams contains a mapping for it, in which
 
                          values                        = xs *[reconstitute(x, xi)] -seq -se- relink(xs, it)],
 
-    stream(self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals    = {},
-                                                                      encode(v) = xs /~push/ value_index -re- xs
-                                                                          -where [k           = key(),
-                                                                                  xs          = [],
-                                                                                  unmark(xs)  = xs %[x.constructor === Array] *![delete self.locals[x[1]][k]] -seq,
-                                                                                  value_index = encoder(self.locals, k, xs, {})(v) -se- unmark(xs)],
+    stream(options, self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals = {}, encode = local_encode, decode = local_decode]
 
-                                                                      decode(v) = decode(self.locals, v)]]});
+                             -where [settings           = {opaques: true} /-$.merge/ options,
+                                     unmark(xs, k)      = xs *![delete self.locals[x[1]][k], when [x.constructor === Array]] -seq,
+                                     erase(xs)          = xs *![x[1] = 0,                    when [x.constructor === Array]] -seq,
+
+                                     postprocess(xs, k) = unmark(xs, k) -then- erase(xs) /unless [settings.opaques],
+
+                                     local_encode(v)    = xs /~push/ value_index -then- postprocess(xs, k) -then- xs -where [k           = key(),
+                                                                                                                             xs          = [],
+                                                                                                                             value_index = encoder(self.locals, k, xs, {})(v)],
+                                     local_decode(v)    = decode(self.locals, v)]]});
