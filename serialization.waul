@@ -1,92 +1,92 @@
-Caterwaul serialization support | Spencer Tipping
-Licensed under the terms of the MIT source code license
+# Caterwaul serialization support | Spencer Tipping
+# Licensed under the terms of the MIT source code license
 
-Introduction.
-This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul. In addition to the functionality implemented in Rather
-Insane Serialization, this project also provides support for opaque references, which are associated with a specific serialization stream. This is useful for dealing with non-serializable
-values that are intermixed with normal ones. The most common use case for this is probably sending DOM nodes or jQuery collections to a server and then resolving them back into local objects
-when they reach the client again. This serialization library encodes the object's opaque identity whenever a reference is used; that way you have the property that for any reference X,
-deserialize(serialize(X)) === X. (This is true even if X changes state between serialization and deserialization.)
+# Introduction.
+# This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul. In addition to the functionality implemented in Rather
+# Insane Serialization, this project also provides support for opaque references, which are associated with a specific serialization stream. This is useful for dealing with non-serializable
+# values that are intermixed with normal ones. The most common use case for this is probably sending DOM nodes or jQuery collections to a server and then resolving them back into local objects
+# when they reach the client again. This serialization library encodes the object's opaque identity whenever a reference is used; that way you have the property that for any reference X,
+# deserialize(serialize(X)) === X. (This is true even if X changes state between serialization and deserialization.)
 
 caterwaul.module('serialization', 'js_all', function ($) {
 
-Serialization format.
-Serialized values are encoded into JSON data; the end result is something that you can invoke JSON.stringify() on to get a string. (You could also translate the data structure into XML or some
-other format prior to string conversion.) My initial inclination was to use a bytecode format similar to the one used by Rather Insane Serialization, but JSON is ultimately a more flexible
-solution and is easier to implement. It is probably also more performant in some cases.
+# Serialization format.
+# Serialized values are encoded into JSON data; the end result is something that you can invoke JSON.stringify() on to get a string. (You could also translate the data structure into XML or some
+# other format prior to string conversion.) My initial inclination was to use a bytecode format similar to the one used by Rather Insane Serialization, but JSON is ultimately a more flexible
+# solution and is easier to implement. It is probably also more performant in some cases.
 
-Like before, an object graph is used. The toplevel data structure is an array containing elements whose position determines their identity. The first nine logical elements are implied:
+# Like before, an object graph is used. The toplevel data structure is an array containing elements whose position determines their identity. The first nine logical elements are implied:
 
-| 0. undefined
-  1. null
-  2. value-type false
-  3. value-type true
-  4. value-type NaN
-  5. value-type -Infinity
-  6. value-type +Infinity
-  7. value-type 0
-  8. value-type '' (empty string)
+# | 0. undefined
+#   1. null
+#   2. value-type false
+#   3. value-type true
+#   4. value-type NaN
+#   5. value-type -Infinity
+#   6. value-type +Infinity
+#   7. value-type 0
+#   8. value-type '' (empty string)
 
-Each entry within the toplevel array corresponds to a logical piece of data, and as such it has a type tag to indicate its role. The exceptions are for primitive numeric and string values,
-which are encoded verbatim. (The rationale is that they are supported by any marginally competent serialization layer such as JSON.) The type tags are:
+# Each entry within the toplevel array corresponds to a logical piece of data, and as such it has a type tag to indicate its role. The exceptions are for primitive numeric and string values,
+# which are encoded verbatim. (The rationale is that they are supported by any marginally competent serialization layer such as JSON.) The type tags are:
 
-| 0. Unknown (used for opaque value encoding)
-  1. Reference boolean
-  2. Reference number
-  3. Reference string
-  4. Array
-  5. Object
-  6. Date
-  7. Regexp
-  8. Function (no closure support, unfortunately; but local referencing is used)
+# | 0. Unknown (used for opaque value encoding)
+#   1. Reference boolean
+#   2. Reference number
+#   3. Reference string
+#   4. Array
+#   5. Object
+#   6. Date
+#   7. Regexp
+#   8. Function (no closure support, unfortunately; but local referencing is used)
 
-The last entry in the toplevel array is a numeric reference to the original value that was serialized.
+# The last entry in the toplevel array is a numeric reference to the original value that was serialized.
 
-References.
-A reference is encoded using a 4-tuple of its type, a key referring to its local instance, a type-specific structural value, and a list of property links. The type flag is one of the magic
-numbers above. Local instance identifiers have at least 128 bits of random entropy and are base-62 strings; this prevents collisions when a value is run through several streams and makes it
-more difficult (though not impossible, if you have information about the random number generator) to exploit clients by referring to values from other messages.
+# References.
+# A reference is encoded using a 4-tuple of its type, a key referring to its local instance, a type-specific structural value, and a list of property links. The type flag is one of the magic
+# numbers above. Local instance identifiers have at least 128 bits of random entropy and are base-62 strings; this prevents collisions when a value is run through several streams and makes it
+# more difficult (though not impossible, if you have information about the random number generator) to exploit clients by referring to values from other messages.
 
-Type-specific values are arrays, strings, or numbers. They are:
+# Type-specific values are arrays, strings, or numbers. They are:
 
-| 0. For an unknown: the empty array
-  1. For a reference Boolean: a numeric reference to a primitive boolean
-  2. For a reference Number: a numeric reference to a primitive number
-  3. For a reference String: a numeric reference to a primitive string
-  4. For an array: an array of numeric references to its elements
-  5. For an object: the empty array
-  6. For a Date: a numeric reference to its numeric coercion (its UTC value in milliseconds, I believe)
-  7. For a Regexp: a numeric reference to its toString() representation
-  8. For a function: a numeric reference to its source code as a string
+# | 0. For an unknown: the empty array
+#   1. For a reference Boolean: a numeric reference to a primitive boolean
+#   2. For a reference Number: a numeric reference to a primitive number
+#   3. For a reference String: a numeric reference to a primitive string
+#   4. For an array: an array of numeric references to its elements
+#   5. For an object: the empty array
+#   6. For a Date: a numeric reference to its numeric coercion (its UTC value in milliseconds, I believe)
+#   7. For a Regexp: a numeric reference to its toString() representation
+#   8. For a function: a numeric reference to its source code as a string
 
-So, for example:
+# So, for example:
 
-| encode(new Boolean(true))     -> [[1, 'local id', 3, []], 9]
-  encode([1, 'foo'])            -> [[4, 'local id', [10, 11], []], 1, 'foo', 9]
+# | encode(new Boolean(true))     -> [[1, 'local id', 3, []], 9]
+#   encode([1, 'foo'])            -> [[4, 'local id', [10, 11], []], 1, 'foo', 9]
 
-Notice that all of the indexes are shifted up by 9; so the index of the first element of the serializer output is 9, not 0. This happens because of the preloaded constant table. The first nine
-indexes refer to those, and the array works as though they were prepended to it. (This is actually responsible for a nontrivial amount of machinery in the decoder; see ref(xs, index) for
-example.)
+# Notice that all of the indexes are shifted up by 9; so the index of the first element of the serializer output is 9, not 0. This happens because of the preloaded constant table. The first nine
+# indexes refer to those, and the array works as though they were prepended to it. (This is actually responsible for a nontrivial amount of machinery in the decoder; see ref(xs, index) for
+# example.)
 
-Linking.
-Once the 4-tuple is allocated in the toplevel array, the encoder searches the original object for property links. (For arrays, this includes a step to populate the list of numerically-indexed
-values; these are excluded from the main link table for performance and Javascript-pathology reasons.) Links are stored in an array of implied 2-tuples. For example:
+# Linking.
+# Once the 4-tuple is allocated in the toplevel array, the encoder searches the original object for property links. (For arrays, this includes a step to populate the list of numerically-indexed
+# values; these are excluded from the main link table for performance and Javascript-pathology reasons.) Links are stored in an array of implied 2-tuples. For example:
 
-| encode({foo: 'bar', bif: 'baz'})      -> [[5, 'local id', [], [10, 11, 12, 13]], 'foo', 'bar', 'bif', 'baz', 9]
+# | encode({foo: 'bar', bif: 'baz'})      -> [[5, 'local id', [], [10, 11, 12, 13]], 'foo', 'bar', 'bif', 'baz', 9]
 
-In this case, the array [10, 11, 12, 13] should be interpreted as [[10, 11], [12, 13]] (this is responsible for the sketchy explicit ++xi happening in the decoder), but isn't encoded that way
-for performance and space reasons. I didn't benchmark this, by the way. I just felt like a bit of premature optimization.
+# In this case, the array [10, 11, 12, 13] should be interpreted as [[10, 11], [12, 13]] (this is responsible for the sketchy explicit ++xi happening in the decoder), but isn't encoded that way
+# for performance and space reasons. I didn't benchmark this, by the way. I just felt like a bit of premature optimization.
 
-Unknowns.
-There's some interesting stuff going on with unknown values. An unknown is what you get when you decode something that this library doesn't know how to encode. For instance, if you encode
-'document' on a browser and decode it somewhere else (such as in a node.js process), you'll get an unknown where the document was. The following properties are true of unknowns:
+# Unknowns.
+# There's some interesting stuff going on with unknown values. An unknown is what you get when you decode something that this library doesn't know how to encode. For instance, if you encode
+# 'document' on a browser and decode it somewhere else (such as in a node.js process), you'll get an unknown where the document was. The following properties are true of unknowns:
 
-| 1. Their original properties are linked, provided that they satisfy hasOwnProperty().
-  2. Encoding a non-serializable value with one stream and decoding it with another produces an unknown.
-  3. An unknown can be encoded using any stream and decoded with the original to restore the original reference.
+# | 1. Their original properties are linked, provided that they satisfy hasOwnProperty().
+#   2. Encoding a non-serializable value with one stream and decoding it with another produces an unknown.
+#   3. An unknown can be encoded using any stream and decoded with the original to restore the original reference.
 
-Most of these things follow from the fact that an unknown has a constant local key. This means that other streams are required to respect its identity and preserve it across serialization and
-deserialization (unless one of those streams contains a mapping for it, in which case the original value is restored). Unknowns bypass the linking step.
+# Most of these things follow from the fact that an unknown has a constant local key. This means that other streams are required to respect its identity and preserve it across serialization and
+# deserialization (unless one of those streams contains a mapping for it, in which case the original value is restored). Unknowns bypass the linking step.
 
   $.serialization = stream /-$.merge/ statics -where [
 
@@ -164,3 +164,5 @@ deserialization (unless one of those streams contains a mapping for it, in which
                                                                                                                              xs          = [],
                                                                                                                              value_index = encoder(self.locals, k, xs, {})(v)],
                                      local_decode(v)    = decode(self.locals, v)]]});
+
+# Generated by SDoc 

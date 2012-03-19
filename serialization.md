@@ -1,0 +1,171 @@
+Caterwaul serialization support | Spencer Tipping
+Licensed under the terms of the MIT source code license
+
+# Introduction
+
+This project is a reimplementation of Rather Insane Serialization (github.com/spencertipping/rather-insane-serialization) for Caterwaul. In addition to the functionality implemented in Rather
+Insane Serialization, this project also provides support for opaque references, which are associated with a specific serialization stream. This is useful for dealing with non-serializable
+values that are intermixed with normal ones. The most common use case for this is probably sending DOM nodes or jQuery collections to a server and then resolving them back into local objects
+when they reach the client again. This serialization library encodes the object's opaque identity whenever a reference is used; that way you have the property that for any reference X,
+deserialize(serialize(X)) === X. (This is true even if X changes state between serialization and deserialization.)
+
+    caterwaul.module('serialization', 'js_all', function ($) {
+
+# Serialization format
+
+Serialized values are encoded into JSON data; the end result is something that you can invoke JSON.stringify() on to get a string. (You could also translate the data structure into XML or some
+other format prior to string conversion.) My initial inclination was to use a bytecode format similar to the one used by Rather Insane Serialization, but JSON is ultimately a more flexible
+solution and is easier to implement. It is probably also more performant in some cases.
+
+Like before, an object graph is used. The toplevel data structure is an array containing elements whose position determines their identity. The first nine logical elements are implied:
+
+    0. undefined
+    1. null
+    2. value-type false
+    3. value-type true
+    4. value-type NaN
+    5. value-type -Infinity
+    6. value-type +Infinity
+    7. value-type 0
+    8. value-type '' (empty string)
+
+Each entry within the toplevel array corresponds to a logical piece of data, and as such it has a type tag to indicate its role. The exceptions are for primitive numeric and string values,
+which are encoded verbatim. (The rationale is that they are supported by any marginally competent serialization layer such as JSON.) The type tags are:
+
+    0. Unknown (used for opaque value encoding)
+    1. Reference boolean
+    2. Reference number
+    3. Reference string
+    4. Array
+    5. Object
+    6. Date
+    7. Regexp
+    8. Function (no closure support, unfortunately; but local referencing is used)
+
+The last entry in the toplevel array is a numeric reference to the original value that was serialized.
+
+# References
+
+A reference is encoded using a 4-tuple of its type, a key referring to its local instance, a type-specific structural value, and a list of property links. The type flag is one of the magic
+numbers above. Local instance identifiers have at least 128 bits of random entropy and are base-62 strings; this prevents collisions when a value is run through several streams and makes it
+more difficult (though not impossible, if you have information about the random number generator) to exploit clients by referring to values from other messages.
+
+Type-specific values are arrays, strings, or numbers. They are:
+
+    0. For an unknown: the empty array
+    1. For a reference Boolean: a numeric reference to a primitive boolean
+    2. For a reference Number: a numeric reference to a primitive number
+    3. For a reference String: a numeric reference to a primitive string
+    4. For an array: an array of numeric references to its elements
+    5. For an object: the empty array
+    6. For a Date: a numeric reference to its numeric coercion (its UTC value in milliseconds, I believe)
+    7. For a Regexp: a numeric reference to its toString() representation
+    8. For a function: a numeric reference to its source code as a string
+
+So, for example:
+
+    encode(new Boolean(true))     -> [[1, 'local id', 3, []], 9]
+    encode([1, 'foo'])            -> [[4, 'local id', [10, 11], []], 1, 'foo', 9]
+
+Notice that all of the indexes are shifted up by 9; so the index of the first element of the serializer output is 9, not 0. This happens because of the preloaded constant table. The first nine
+indexes refer to those, and the array works as though they were prepended to it. (This is actually responsible for a nontrivial amount of machinery in the decoder; see ref(xs, index) for
+example.)
+
+# Linking
+
+Once the 4-tuple is allocated in the toplevel array, the encoder searches the original object for property links. (For arrays, this includes a step to populate the list of numerically-indexed
+values; these are excluded from the main link table for performance and Javascript-pathology reasons.) Links are stored in an array of implied 2-tuples. For example:
+
+    encode({foo: 'bar', bif: 'baz'})      -> [[5, 'local id', [], [10, 11, 12, 13]], 'foo', 'bar', 'bif', 'baz', 9]
+
+In this case, the array [10, 11, 12, 13] should be interpreted as [[10, 11], [12, 13]] (this is responsible for the sketchy explicit ++xi happening in the decoder), but isn't encoded that way
+for performance and space reasons. I didn't benchmark this, by the way. I just felt like a bit of premature optimization.
+
+# Unknowns
+
+There's some interesting stuff going on with unknown values. An unknown is what you get when you decode something that this library doesn't know how to encode. For instance, if you encode
+'document' on a browser and decode it somewhere else (such as in a node.js process), you'll get an unknown where the document was. The following properties are true of unknowns:
+
+    1. Their original properties are linked, provided that they satisfy hasOwnProperty().
+    2. Encoding a non-serializable value with one stream and decoding it with another produces an unknown.
+    3. An unknown can be encoded using any stream and decoded with the original to restore the original reference.
+
+Most of these things follow from the fact that an unknown has a constant local key. This means that other streams are required to respect its identity and preserve it across serialization and
+deserialization (unless one of those streams contains a mapping for it, in which case the original value is restored). Unknowns bypass the linking step.
+
+      $.serialization = stream /-$.merge/ statics -where [
+
+        statics                                       = capture [unknown = "this -se [it.id = _]".qf -se [it.prototype /-$.merge/ capture [toString() = '<#unknown #{this.id}>']]],
+
+        base62_characters                             = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
+        key()                                         = n[22] *[base62_characters.charAt(Math.random() * 62 >>> 0)] -seq -re- '_#{it.join("")}',
+        precoded_values                               = [void 0, null, false, true, ''/'', -1/0, 1/0, 0, ''],
+        structural_reference_types                    = [Boolean, Number, String, Array, Object, Date, RegExp, Function],
+
+        shift                                         = precoded_values.length,
+        shift1                                        = shift - 1,
+
+        encoder(locals, k, xs, c, encode = result)(v) = position_of(v) -or- store(v) -re- +it
+                                                -where [ref_detector          = new String(key()),
+                                                        is_precoded(v)        = !v || v.constructor === Number && !isFinite(v) -or- isNaN(v) || v === true,
+                                                        is_reference(v)       = ['object', 'function'] /~indexOf/ typeof v !== -1,
+
+                                                        precoded_index_of(v)  = precoded_values /~indexOf/ v -re [it === -1 && isNaN(v) ? 4 : it],
+
+                                                        is_opaque(v)          = structural_reference_types /~indexOf/ v.constructor === -1,
+                                                        is_unknown(v)         = v.constructor === $.serialization.unknown,
+                                                        local_key_for(v)      = v /!is_unknown ? v.id : key(),
+                                                        position_of(v)        = v /!is_precoded ? new Number(precoded_index_of(v)) : v /!is_reference ? v[k] : c['@#{(typeof v).charAt(0)}#{v}'],
+                                                        store(v)              = v /!is_reference ? store_reference(locals[k] = v, k) -where [k = local_key_for(v)] -se- visit(v)
+                                                                                                 : c['@#{(typeof v).charAt(0)}#{v}'] = shift1 + xs /~push/ v,
+
+                                                        store_reference(v, i) = v[k] = shift1 + xs /~push/ [type_of(v), i, value_of(v), []],
+
+                                                        type_of(v)            = structural_reference_types /~indexOf/ v.constructor + 1,
+                                                        value_of(v)           = v.constructor === Boolean || v.constructor === Number || v.constructor === Date     ? encode(v.valueOf()) :
+                                                                                v.constructor === String  || v.constructor === RegExp || v.constructor === Function ? encode(v.toString()) : [],
+
+                                                        visit(v)              = link_properties(v, is_array) -se- link_array_elements(v) /when.is_array -unless- v /!is_opaque
+                                                                        -where [is_array                     = v instanceof Array,
+                                                                                ref                          = xs[position_of(v) - shift],
+                                                                                encode_pair(p)               = ref[3] / encode(p[0]) /~push/ encode(p[1]),
+
+                                                                                is_array_index(v, p)         = /^\d+$/.test(p) && +p >= 0 && +p < v.length,
+                                                                                link_properties(v, is_array) = v /pairs %[x[0] !== k && !is_array -or- !is_array_index(v, x[0])] *!encode_pair -seq,
+                                                                                link_array_elements(v)       = ref[2] = +v *encode -seq]],
+        decode(locals, xs) = ref(values, values.pop())
+                     -where [was_local                     = {},
+                             reconstitute(o, i)            = o.constructor === Array ? (was_local[i] = locals[o[1]]) || reconstitute_reference(o, xs) : o,
+                             reconstitute_reference(o)     = o[0] === 4        ? [] :
+                                                             o[0] === 8        ? safely_rebuild_function(xs /-ref/ o[2]) :
+                                                             o[0] === 7        ? /^\/(.*)\/([^\/]*)$/.exec(xs /-ref/ o[2]) -re [new RegExp(it[1], it[2])] :
+                                                             o[0] && o[0] <= 8 ? new structural_reference_types[o[0] - 1](xs /-ref/ o[2]) :
+                                                                                 new $.serialization.unknown(o[1]),
+
+                             ref(xs, index)                = index >= shift ? xs[index - shift] : precoded_values[index],
+
+                             safely_rebuild_function(code) = $ /~compile/ parsed
+                                                      -when [parsed /!looks_like_a_function || parsed[0].data === '(' && parsed[0] /!looks_like_a_function]
+                                                     -where [parsed                   = $ /~parse/ code,
+                                                             looks_like_a_function(t) = t.data === 'function' && t[0].data === '(' && t[1].data === '{'],
+
+                             relink(serialized, objects)   = serialized *!link_object_properties *!link_array_properties -seq
+                                                     -where [has_links(x)                                    = x.constructor === Array && !was_local[this.xi],
+                                                             has_indexes(x)                                  = x /!has_links && x[0] === 4,
+                                                             link_object_properties(s, o = objects[this.xi]) = s[3] *![o[objects /-ref/ x] = objects /-ref/ xs[++xi]] -seq -when- s /!has_links,
+                                                             link_array_properties (s, o = objects[this.xi]) = s[2] *![o.push(objects /-ref/ x)]                      -seq -when- s /!has_indexes],
+
+                             values                        = xs *[reconstitute(x, xi)] -seq -se- relink(xs, it)],
+
+        stream(options, self = result) = "self /~encode/ _".qf /-$.merge/ capture [locals = {}, encode = local_encode, decode = local_decode]
+
+                                 -where [settings           = {opaques: true} /-$.merge/ options,
+                                         unmark(xs, k)      = xs *![delete self.locals[x[1]][k], when [x.constructor === Array]] -seq,
+                                         erase(xs)          = xs *![x[1] = 0,                    when [x.constructor === Array]] -seq,
+
+                                         postprocess(xs, k) = unmark(xs, k) -then- erase(xs) /unless [settings.opaques],
+
+                                         local_encode(v)    = xs /~push/ value_index -then- postprocess(xs, k) -then- xs -where [k           = key(),
+                                                                                                                                 xs          = [],
+                                                                                                                                 value_index = encoder(self.locals, k, xs, {})(v)],
+                                         local_decode(v)    = decode(self.locals, v)]]});

@@ -1,13 +1,14 @@
-Mediocre serialization for Javascript.
+# Mediocre serialization for Javascript
+
 This library is basically a port of Rather Insane Serialization to Caterwaul.
 It serializes things using stateful streams, which construct references for
 opaque objects and can later resolve those references. For example:
 
-d = document.createElement('div')
-stream = caterwaul.serialization()
-s = stream({dom_node: d})
-decoded = stream.decode(s)
-decoded.dom_node === d          // returns true
+    d = document.createElement('div')
+    stream = caterwaul.serialization()
+    s = stream({dom_node: d})
+    decoded = stream.decode(s)
+    decoded.dom_node === d          // returns true
 
 It uses this technique when encoding objects whose prototypes are unknown.
 
